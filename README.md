@@ -40,11 +40,41 @@ python compare_approaches.py
 
 The three autoencoder approaches provide different trade-offs:
 
-| Approach | Training Data | Detection Method | Best For |
-|----------|---------------|------------------|----------|
-| Unsupervised | Benign only | Reconstruction error | Realistic scenarios |
-| Semi-Supervised | Benign + Unsafe | Combined score | Maximum performance |
-| Dual | Separate models | Error difference | Interpretability |
+| Approach | Training Data | Detection Method |
+|----------|---------------|------------------|
+| Unsupervised | Benign only | High reconstruction error indicates anomaly (unsafe content) |
+| Semi-Supervised | Benign + Unsafe | α × Normalized_Reconstruction_Error + β × Classification_Score |
+| Dual | Benign/Unsafe Separate models | Benign_Reconstruction_Error - Unsafe_Reconstruction_Error |
+
+### Detection Method Details
+
+#### 1. Unsupervised Autoencoder
+- **Training**: Autoencoder learns to reconstruct benign patterns only
+- **Assumption**: Benign data has consistent patterns; unsafe data will have high reconstruction error
+- **Detection**: `MSE_Loss(input, reconstructed) > threshold → Unsafe`
+- **Threshold**: Optimized using validation subset for best F1 score
+
+#### 2. Semi-Supervised Autoencoder
+- **Training**:
+  - Autoencoder component: Learns to reconstruct all data (benign + unsafe)
+  - Classifier component: Learns to distinguish benign (0) vs unsafe (1) from latent representations
+  - Combined loss: `Reconstruction_Loss + λ × Classification_Loss`
+- **Detection**:
+  - Reconstruction score: `(error - min_error) / (max_error - min_error)`
+  - Classification score: `softmax(logits)[unsafe_class]`
+  - Combined score: `α × reconstruction_score + β × classification_score`
+  - Default weights: α=0.6, β=0.4
+
+#### 3. Dual Autoencoder
+- **Training**:
+  - Benign autoencoder: Trained exclusively on benign data
+  - Unsafe autoencoder: Trained exclusively on unsafe data
+  - Each model specializes in reconstructing its respective data type
+- **Detection**:
+  - Benign samples: Low benign error, high unsafe error → Negative score
+  - Unsafe samples: High benign error, low unsafe error → Positive score
+  - Detection score: `Benign_Error - Unsafe_Error`
+  - Positive score → Unsafe, Negative score → Benign
 
 Results are saved to `results/` directory with detailed per-dataset breakdowns.
 
