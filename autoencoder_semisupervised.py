@@ -283,7 +283,7 @@ def train_semisupervised_autoencoder(benign_features, unsafe_features, config):
     
     return model
 
-def evaluate_semisupervised_autoencoder(model, test_features, test_labels, config):
+def evaluate_semisupervised_autoencoder_detailed(model, test_features, test_labels, test_dataset_info, config):
     """Evaluate semi-supervised autoencoder using combined score"""
     print(f"Evaluating semi-supervised autoencoder on {len(test_features)} test samples...")
 
@@ -361,14 +361,70 @@ def evaluate_semisupervised_autoencoder(model, test_features, test_labels, confi
         auroc = 0.0
         auprc = 0.0
 
+    # Calculate per-dataset metrics
+    dataset_metrics = {}
+    current_idx = 0
+
+    for dataset_name, dataset_samples in test_dataset_info.items():
+        dataset_size = len(dataset_samples)
+        if dataset_size == 0:
+            continue
+
+        dataset_labels = test_labels[current_idx:current_idx + dataset_size]
+        dataset_predictions = predictions[current_idx:current_idx + dataset_size]
+        dataset_scores = combined_scores[current_idx:current_idx + dataset_size]
+
+        # Calculate metrics for this dataset
+        dataset_acc = accuracy_score(dataset_labels, dataset_predictions)
+        dataset_f1 = f1_score(dataset_labels, dataset_predictions, zero_division=0)
+
+        # Calculate TPR, FPR for this dataset
+        if len(np.unique(dataset_labels)) > 1:
+            tn_d, fp_d, fn_d, tp_d = confusion_matrix(dataset_labels, dataset_predictions).ravel()
+            dataset_tpr = tp_d / (tp_d + fn_d) if (tp_d + fn_d) > 0 else 0.0
+            dataset_fpr = fp_d / (fp_d + tn_d) if (fp_d + tn_d) > 0 else 0.0
+
+            try:
+                dataset_auroc = roc_auc_score(dataset_labels, dataset_scores)
+                dataset_auprc = average_precision_score(dataset_labels, dataset_scores)
+            except:
+                dataset_auroc = 0.0
+                dataset_auprc = 0.0
+        else:
+            # Single class dataset
+            dataset_tpr = 1.0 if dataset_labels[0] == 1 and dataset_predictions[0] == 1 else 0.0
+            dataset_fpr = 1.0 if dataset_labels[0] == 0 and dataset_predictions[0] == 1 else 0.0
+            dataset_auroc = 0.0
+            dataset_auprc = 0.0
+
+        dataset_metrics[dataset_name] = {
+            'accuracy': dataset_acc,
+            'f1': dataset_f1,
+            'tpr': dataset_tpr,
+            'fpr': dataset_fpr,
+            'auroc': dataset_auroc,
+            'auprc': dataset_auprc,
+            'size': dataset_size,
+            'safe_samples': int(np.sum(dataset_labels == 0)),
+            'unsafe_samples': int(np.sum(dataset_labels == 1)),
+            'mean_combined_score': float(np.mean(dataset_scores)),
+            'mean_reconstruction_error': float(np.mean(reconstruction_errors[current_idx:current_idx + dataset_size])),
+            'mean_classification_score': float(np.mean(classification_scores[current_idx:current_idx + dataset_size]))
+        }
+
+        current_idx += dataset_size
+
     results = {
-        'accuracy': accuracy,
-        'f1': f1,
-        'tpr': tpr,
-        'fpr': fpr,
-        'auroc': auroc,
-        'auprc': auprc,
-        'threshold': best_threshold,
+        'overall': {
+            'accuracy': accuracy,
+            'f1': f1,
+            'tpr': tpr,
+            'fpr': fpr,
+            'auroc': auroc,
+            'auprc': auprc,
+            'threshold': best_threshold
+        },
+        'per_dataset': dataset_metrics,
         'reconstruction_errors': reconstruction_errors,
         'classification_scores': classification_scores,
         'combined_scores': combined_scores,
@@ -412,7 +468,17 @@ if __name__ == "__main__":
     benign_train_features = feature_extractor.extract_features(benign_train_samples, batch_size=8)
     unsafe_train_features = feature_extractor.extract_features(unsafe_train_samples, batch_size=8)
 
-    # Extract test features
+    # Extract test features with dataset info for detailed evaluation
+    test_dataset_info = {
+        'XSTest_safe': safe_test_samples[:250] if len(safe_test_samples) >= 250 else [],
+        'FigTxt_safe': safe_test_samples[250:550] if len(safe_test_samples) >= 550 else [],
+        'VQAv2': safe_test_samples[550:] if len(safe_test_samples) > 550 else [],
+        'XSTest_unsafe': unsafe_test_samples[:200] if len(unsafe_test_samples) >= 200 else [],
+        'FigTxt_unsafe': unsafe_test_samples[200:550] if len(unsafe_test_samples) >= 550 else [],
+        'VAE': unsafe_test_samples[550:750] if len(unsafe_test_samples) >= 750 else [],
+        'JailbreakV-28K': unsafe_test_samples[750:] if len(unsafe_test_samples) > 750 else []
+    }
+
     all_test_samples = safe_test_samples + unsafe_test_samples
     test_labels = [0] * len(safe_test_samples) + [1] * len(unsafe_test_samples)
     test_features = feature_extractor.extract_features(all_test_samples, batch_size=8)
@@ -434,30 +500,63 @@ if __name__ == "__main__":
     print("EVALUATING SEMI-SUPERVISED AUTOENCODER")
     print("="*50)
 
-    results = evaluate_semisupervised_autoencoder(model, test_features, np.array(test_labels), config)
+    results = evaluate_semisupervised_autoencoder_detailed(model, test_features, np.array(test_labels), test_dataset_info, config)
 
-    # Print results
+    # Print overall results
     print("\n" + "="*50)
-    print("RESULTS")
+    print("OVERALL RESULTS")
     print("="*50)
-    print(f"Accuracy: {results['accuracy']:.4f}")
-    print(f"F1 Score: {results['f1']:.4f}")
-    print(f"TPR (Sensitivity): {results['tpr']:.4f}")
-    print(f"FPR (1-Specificity): {results['fpr']:.4f}")
-    print(f"AUROC: {results['auroc']:.4f}")
-    print(f"AUPRC: {results['auprc']:.4f}")
-    print(f"Threshold: {results['threshold']:.6f}")
+    overall = results['overall']
+    print(f"Accuracy: {overall['accuracy']:.4f}")
+    print(f"F1 Score: {overall['f1']:.4f}")
+    print(f"TPR (Sensitivity): {overall['tpr']:.4f}")
+    print(f"FPR (1-Specificity): {overall['fpr']:.4f}")
+    print(f"AUROC: {overall['auroc']:.4f}")
+    print(f"AUPRC: {overall['auprc']:.4f}")
+    print(f"Threshold: {overall['threshold']:.6f}")
 
-    # Save results
+    # Print per-dataset results
+    print("\n" + "="*50)
+    print("PER-DATASET BREAKDOWN")
+    print("="*50)
+    print(f"{'Dataset':<15} {'Size':<6} {'Safe':<5} {'Unsafe':<6} {'Acc':<6} {'F1':<6} {'TPR':<6} {'FPR':<6} {'AUROC':<6} {'AUPRC':<6} {'CombScore':<9}")
+    print("-" * 100)
+
+    for dataset_name, metrics in results['per_dataset'].items():
+        if metrics['size'] > 0:  # Only show datasets with samples
+            print(f"{dataset_name:<15} {metrics['size']:<6} {metrics['safe_samples']:<5} {metrics['unsafe_samples']:<6} "
+                  f"{metrics['accuracy']:<6.3f} {metrics['f1']:<6.3f} {metrics['tpr']:<6.3f} {metrics['fpr']:<6.3f} "
+                  f"{metrics['auroc']:<6.3f} {metrics['auprc']:<6.3f} {metrics['mean_combined_score']:<9.4f}")
+
+    # Save detailed results
     os.makedirs('results', exist_ok=True)
     results_summary = {
-        'accuracy': float(results['accuracy']),
-        'f1': float(results['f1']),
-        'tpr': float(results['tpr']),
-        'fpr': float(results['fpr']),
-        'auroc': float(results['auroc']),
-        'auprc': float(results['auprc']),
-        'threshold': float(results['threshold']),
+        'overall': {
+            'accuracy': float(results['overall']['accuracy']),
+            'f1': float(results['overall']['f1']),
+            'tpr': float(results['overall']['tpr']),
+            'fpr': float(results['overall']['fpr']),
+            'auroc': float(results['overall']['auroc']),
+            'auprc': float(results['overall']['auprc']),
+            'threshold': float(results['overall']['threshold'])
+        },
+        'per_dataset': {
+            dataset: {
+                'accuracy': float(metrics['accuracy']),
+                'f1': float(metrics['f1']),
+                'tpr': float(metrics['tpr']),
+                'fpr': float(metrics['fpr']),
+                'auroc': float(metrics['auroc']),
+                'auprc': float(metrics['auprc']),
+                'size': int(metrics['size']),
+                'safe_samples': int(metrics['safe_samples']),
+                'unsafe_samples': int(metrics['unsafe_samples']),
+                'mean_combined_score': float(metrics['mean_combined_score']),
+                'mean_reconstruction_error': float(metrics['mean_reconstruction_error']),
+                'mean_classification_score': float(metrics['mean_classification_score'])
+            }
+            for dataset, metrics in results['per_dataset'].items()
+        },
         'config': {
             'latent_dim': config.LATENT_DIM,
             'batch_size': config.BATCH_SIZE,
