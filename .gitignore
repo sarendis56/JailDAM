@@ -69,7 +69,6 @@ temp/
 # *.zip
 # *.tar.gz
 
-results/
 data
 *.pth
 compare_approaches.py

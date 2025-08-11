@@ -1,0 +1,98 @@
+{
+  "overall": {
+    "accuracy": 0.7172222222222222,
+    "f1": 0.7138842046093311,
+    "tpr": 0.7055555555555556,
+    "fpr": 0.27111111111111114,
+    "auroc": 0.7887271604938271,
+    "auprc": 0.8261996771749498,
+    "threshold": 0.00032414194623318806
+  },
+  "per_dataset": {
+    "XSTest_safe": {
+      "accuracy": 0.784,
+      "f1": 0.0,
+      "tpr": 0.0,
+      "fpr": 0.0,
+      "auroc": 0.0,
+      "auprc": 0.0,
+      "size": 250,
+      "safe_samples": 250,
+      "unsafe_samples": 0
+    },
+    "FigTxt_safe": {
+      "accuracy": 0.36666666666666664,
+      "f1": 0.0,
+      "tpr": 0.0,
+      "fpr": 1.0,
+      "auroc": 0.0,
+      "auprc": 0.0,
+      "size": 300,
+      "safe_samples": 300,
+      "unsafe_samples": 0
+    },
+    "VQAv2": {
+      "accuracy": 1.0,
+      "f1": 0.0,
+      "tpr": 0.0,
+      "fpr": 0.0,
+      "auroc": 0.0,
+      "auprc": 0.0,
+      "size": 350,
+      "safe_samples": 350,
+      "unsafe_samples": 0
+    },
+    "XSTest_unsafe": {
+      "accuracy": 0.02,
+      "f1": 0.0392156862745098,
+      "tpr": 0.0,
+      "fpr": 0.0,
+      "auroc": 0.0,
+      "auprc": 0.0,
+      "size": 200,
+      "safe_samples": 0,
+      "unsafe_samples": 200
+    },
+    "FigTxt_unsafe": {
+      "accuracy": 0.8028571428571428,
+      "f1": 0.8906497622820919,
+      "tpr": 1.0,
+      "fpr": 0.0,
+      "auroc": 0.0,
+      "auprc": 0.0,
+      "size": 350,
+      "safe_samples": 0,
+      "unsafe_samples": 350
+    },
+    "VAE": {
+      "accuracy": 1.0,
+      "f1": 1.0,
+      "tpr": 1.0,
+      "fpr": 0.0,
+      "auroc": 0.0,
+      "auprc": 0.0,
+      "size": 200,
+      "safe_samples": 0,
+      "unsafe_samples": 200
+    },
+    "JailbreakV-28K": {
+      "accuracy": 1.0,
+      "f1": 1.0,
+      "tpr": 1.0,
+      "fpr": 0.0,
+      "auroc": 0.0,
+      "auprc": 0.0,
+      "size": 150,
+      "safe_samples": 0,
+      "unsafe_samples": 150
+    }
+  },
+  "config": {
+    "latent_dim": 128,
+    "batch_size": 16,
+    "learning_rate": 0.0001,
+    "num_epochs": 100,
+    "seed": 42,
+    "vlm_model": "openai/clip-vit-large-patch14"
+  }
+}
