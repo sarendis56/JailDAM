@@ -201,7 +201,7 @@ def train_single_autoencoder(features, name, config):
     
     return model, train_losses
 
-def evaluate_dual_autoencoder(benign_model, unsafe_model, test_features, test_labels, test_dataset_info, config):
+def evaluate_dual_autoencoder(benign_model, unsafe_model, test_features, test_labels, test_dataset_info, benign_train_features, unsafe_train_features, config):
     """Evaluate dual autoencoder using difference in reconstruction errors"""
     print(f"Evaluating dual autoencoder on {len(test_features)} test samples...")
     
@@ -240,25 +240,53 @@ def evaluate_dual_autoencoder(benign_model, unsafe_model, test_features, test_la
     print(f"  Min: {np.min(detection_scores):.6f}")
     print(f"  Max: {np.max(detection_scores):.6f}")
     
-    # Find optimal threshold using validation approach
-    val_size = min(200, len(test_labels) // 4)
-    val_indices = np.random.choice(len(test_labels), val_size, replace=False)
-    
-    val_scores = detection_scores[val_indices]
-    val_labels = test_labels[val_indices]
-    
-    # Grid search for optimal threshold
-    thresholds = np.percentile(val_scores, np.linspace(10, 90, 100))
-    best_f1 = 0
-    best_threshold = 0.0  # Start with 0 as default (natural separation point)
-    
-    for threshold in thresholds:
-        val_predictions = (val_scores > threshold).astype(int)
-        f1 = f1_score(val_labels, val_predictions, zero_division=0)
-        if f1 > best_f1:
-            best_f1 = f1
-            best_threshold = threshold
-    
+    # Use the same threshold optimization as reference implementation
+    print("Determining threshold using reference ThresholdOptimizer algorithm...")
+
+    # Calculate detection scores on training data
+    benign_train_dataset = TensorDataset(torch.FloatTensor(benign_train_features))
+    unsafe_train_dataset = TensorDataset(torch.FloatTensor(unsafe_train_features))
+
+    benign_train_loader = DataLoader(benign_train_dataset, batch_size=config.BATCH_SIZE, shuffle=False)
+    unsafe_train_loader = DataLoader(unsafe_train_dataset, batch_size=config.BATCH_SIZE, shuffle=False)
+
+    # Get training detection scores
+    train_benign_errors = []
+    train_unsafe_errors = []
+
+    # Process benign training data
+    with torch.no_grad():
+        for batch in benign_train_loader:
+            inputs = batch[0].to(config.DEVICE)
+            benign_err = benign_model.get_reconstruction_error(inputs)
+            unsafe_err = unsafe_model.get_reconstruction_error(inputs)
+            train_benign_errors.extend(benign_err.cpu().numpy())
+            train_unsafe_errors.extend(unsafe_err.cpu().numpy())
+
+    # Process unsafe training data
+    with torch.no_grad():
+        for batch in unsafe_train_loader:
+            inputs = batch[0].to(config.DEVICE)
+            benign_err = benign_model.get_reconstruction_error(inputs)
+            unsafe_err = unsafe_model.get_reconstruction_error(inputs)
+            train_benign_errors.extend(benign_err.cpu().numpy())
+            train_unsafe_errors.extend(unsafe_err.cpu().numpy())
+
+    train_benign_errors = np.array(train_benign_errors)
+    train_unsafe_errors = np.array(train_unsafe_errors)
+
+    # Calculate training detection scores
+    train_detection_scores = train_benign_errors - train_unsafe_errors
+    train_labels = np.hstack([np.zeros(len(benign_train_features)), np.ones(len(unsafe_train_features))])
+
+    # Use shared ThresholdOptimizer on training detection scores (no fallback)
+    from threshold_optimizer import ThresholdOptimizer
+    opt = ThresholdOptimizer(max_samples_per_class=150, random_state=config.SEED)
+    thr_result = opt.fit_from_scores(train_detection_scores, np.array(train_labels))
+    best_threshold = thr_result.threshold
+
+    print(f"    Optimal threshold: {best_threshold:.6f} (Balanced Acc: {thr_result.best_balanced_acc:.4f}, F1: {thr_result.best_f1:.4f}, Range: {thr_result.score_range})")
+
     print(f"Optimal threshold: {best_threshold:.6f}")
     
     # Make predictions on full test set
@@ -440,7 +468,7 @@ if __name__ == "__main__":
     print("EVALUATING DUAL AUTOENCODER")
     print("="*50)
 
-    results = evaluate_dual_autoencoder(benign_model, unsafe_model, test_features, np.array(test_labels), test_dataset_info, config)
+    results = evaluate_dual_autoencoder(benign_model, unsafe_model, test_features, np.array(test_labels), test_dataset_info, benign_train_features, unsafe_train_features, config)
 
     # Print overall results
     print("\n" + "="*50)

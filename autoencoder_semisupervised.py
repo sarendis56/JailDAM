@@ -283,7 +283,7 @@ def train_semisupervised_autoencoder(benign_features, unsafe_features, config):
     
     return model
 
-def evaluate_semisupervised_autoencoder_detailed(model, test_features, test_labels, test_dataset_info, config):
+def evaluate_semisupervised_autoencoder_detailed(model, test_features, test_labels, test_dataset_info, train_features, train_labels, config):
     """Evaluate semi-supervised autoencoder using combined score"""
     print(f"Evaluating semi-supervised autoencoder on {len(test_features)} test samples...")
 
@@ -320,24 +320,45 @@ def evaluate_semisupervised_autoencoder_detailed(model, test_features, test_labe
     beta = 0.4   # Weight for classification score
     combined_scores = alpha * recon_normalized + beta * class_normalized
 
-    # Find optimal threshold for combined score
-    val_size = min(200, len(test_labels) // 4)
-    val_indices = np.random.choice(len(test_labels), val_size, replace=False)
+    # Use the same threshold optimization as reference implementation
+    print("Determining threshold using reference ThresholdOptimizer algorithm...")
 
-    val_scores = combined_scores[val_indices]
-    val_labels = test_labels[val_indices]
+    # Calculate combined scores on training data
+    train_dataset = TensorDataset(torch.FloatTensor(train_features))
+    train_loader = DataLoader(train_dataset, batch_size=config.BATCH_SIZE, shuffle=False)
 
-    # Grid search for optimal threshold
-    thresholds = np.percentile(val_scores, np.linspace(10, 90, 100))
-    best_f1 = 0
-    best_threshold = np.median(combined_scores)
+    train_reconstruction_errors = []
+    train_classification_scores = []
 
-    for threshold in thresholds:
-        val_predictions = (val_scores > threshold).astype(int)
-        f1 = f1_score(val_labels, val_predictions, zero_division=0)
-        if f1 > best_f1:
-            best_f1 = f1
-            best_threshold = threshold
+    with torch.no_grad():
+        for batch in train_loader:
+            inputs = batch[0].to(config.DEVICE)
+
+            # Get reconstruction error and classification scores for training data
+            train_recon_errors = model.get_reconstruction_error(inputs)
+            train_class_scores = model.get_classification_score(inputs)
+
+            train_reconstruction_errors.extend(train_recon_errors.cpu().numpy())
+            train_classification_scores.extend(train_class_scores.cpu().numpy())
+
+    train_reconstruction_errors = np.array(train_reconstruction_errors)
+    train_classification_scores = np.array(train_classification_scores)
+
+    # Normalize training scores the same way as test scores
+    train_recon_normalized = (train_reconstruction_errors - train_reconstruction_errors.min()) / (train_reconstruction_errors.max() - train_reconstruction_errors.min() + 1e-8)
+    train_class_normalized = train_classification_scores
+
+    # Combined score for training data
+    alpha = 0.6  # Same weights as test
+    beta = 0.4
+    train_combined_scores = alpha * train_recon_normalized + beta * train_class_normalized
+
+    # Use shared ThresholdOptimizer
+    from threshold_optimizer import ThresholdOptimizer
+    opt = ThresholdOptimizer(max_samples_per_class=150, random_state=config.SEED)
+    thr_result = opt.fit_from_scores(train_combined_scores, np.array(train_labels))
+    best_threshold = thr_result.threshold
+    print(f"    Optimal threshold: {best_threshold:.6f} (Balanced Acc: {thr_result.best_balanced_acc:.4f}, F1: {thr_result.best_f1:.4f}, Range: {thr_result.score_range})")
 
     print(f"Optimal threshold: {best_threshold:.6f}")
 
@@ -500,7 +521,11 @@ if __name__ == "__main__":
     print("EVALUATING SEMI-SUPERVISED AUTOENCODER")
     print("="*50)
 
-    results = evaluate_semisupervised_autoencoder_detailed(model, test_features, np.array(test_labels), test_dataset_info, config)
+    # Prepare training data for threshold determination
+    all_train_features = np.vstack([benign_train_features, unsafe_train_features])
+    all_train_labels = np.hstack([np.zeros(len(benign_train_features)), np.ones(len(unsafe_train_features))])
+
+    results = evaluate_semisupervised_autoencoder_detailed(model, test_features, np.array(test_labels), test_dataset_info, all_train_features, all_train_labels, config)
 
     # Print overall results
     print("\n" + "="*50)

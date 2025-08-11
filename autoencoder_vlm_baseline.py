@@ -38,6 +38,9 @@ load_FigTxt = load_datasets.load_FigTxt
 load_vqav2 = load_datasets.load_vqav2
 load_adversarial_img = load_datasets.load_adversarial_img
 load_JailBreakV_figstep = load_datasets.load_JailBreakV_figstep
+load_advbench = load_datasets.load_advbench
+load_dan_prompts = load_datasets.load_dan_prompts
+load_JailBreakV_llm_transfer_attack = load_datasets.load_JailBreakV_llm_transfer_attack
 
 # Import the enhanced autoencoder
 from Autoencoder import Autoencoder
@@ -353,7 +356,9 @@ def train_autoencoder(train_features, config):
     
     return model, train_losses
 
-def evaluate_autoencoder_detailed(model, test_features, test_labels, test_dataset_info, config):
+from threshold_optimizer import ThresholdOptimizer
+
+def evaluate_autoencoder_detailed(model, test_features, test_labels, test_dataset_info, train_features, train_labels, config):
     """Evaluate autoencoder with detailed per-dataset metrics"""
     print(f"Evaluating autoencoder on {len(test_features)} test samples...")
 
@@ -373,26 +378,30 @@ def evaluate_autoencoder_detailed(model, test_features, test_labels, test_datase
 
     reconstruction_errors = np.array(reconstruction_errors)
 
-    # Find optimal threshold using validation approach
-    val_size = min(200, len(test_labels) // 4)
-    val_indices = np.random.choice(len(test_labels), val_size, replace=False)
+    # Use the same threshold optimization as reference implementation
+    print("Determining threshold using reference ThresholdOptimizer algorithm...")
 
-    val_errors = reconstruction_errors[val_indices]
-    val_labels = test_labels[val_indices]
+    # Calculate reconstruction errors on ALL training data
+    train_dataset = TensorDataset(torch.FloatTensor(train_features))
+    train_loader = DataLoader(train_dataset, batch_size=config.BATCH_SIZE, shuffle=False)
 
-    # Grid search for optimal threshold
-    thresholds = np.percentile(val_errors, np.linspace(10, 90, 100))
-    best_f1 = 0
-    best_threshold = np.median(reconstruction_errors)
+    train_errors = []
+    with torch.no_grad():
+        for batch in train_loader:
+            inputs = batch[0].to(config.DEVICE)
+            errors = model.get_reconstruction_error(inputs)
+            train_errors.extend(errors.cpu().numpy())
 
-    for threshold in thresholds:
-        val_predictions = (val_errors > threshold).astype(int)
-        f1 = f1_score(val_labels, val_predictions, zero_division=0)
-        if f1 > best_f1:
-            best_f1 = f1
-            best_threshold = threshold
+    train_errors = np.array(train_errors)
 
-    print(f"Optimal threshold: {best_threshold:.6f}")
+    # Strict: require proper training labels (both classes) for fair, reference-aligned thresholding
+    if train_labels is None or len(np.unique(train_labels)) < 2 or len(train_labels) != len(train_errors):
+        raise ValueError("Thresholding requires train_labels with both classes and matching length. Provide a small unsafe train pool.")
+
+    opt = ThresholdOptimizer(max_samples_per_class=150, random_state=config.SEED)
+    thr_result = opt.fit_from_scores(train_errors, np.array(train_labels))
+    best_threshold = thr_result.threshold
+    print(f"ThresholdOptimizer: range={thr_result.score_range}, bal_acc={thr_result.best_balanced_acc:.4f}, f1={thr_result.best_f1:.4f}")
 
     # Make predictions on full test set
     predictions = (reconstruction_errors > best_threshold).astype(int)
@@ -543,6 +552,21 @@ if __name__ == "__main__":
     print("="*50)
 
     benign_train_samples = load_benign_training_data()
+    # Also load a small unsafe train pool to enable balanced validation for thresholding
+    unsafe_train_pool = []
+    try:
+        unsafe_train_pool.extend(load_advbench(max_samples=300))
+    except Exception:
+        pass
+    try:
+        unsafe_train_pool.extend(load_JailBreakV_llm_transfer_attack(image_styles=['nature'], max_samples=400))
+    except Exception:
+        pass
+    try:
+        unsafe_train_pool.extend(load_dan_prompts(max_samples=300))
+    except Exception:
+        pass
+
     safe_test_samples, unsafe_test_samples = load_balanced_test_data()
 
     if not benign_train_samples:
@@ -565,7 +589,14 @@ if __name__ == "__main__":
     print("EXTRACTING VLM FEATURES")
     print("="*50)
 
-    train_features = feature_extractor.extract_features(benign_train_samples, batch_size=8)
+    train_features_benign = feature_extractor.extract_features(benign_train_samples, batch_size=8)
+
+    # Extract features for a small unsafe train pool to support threshold optimizer
+    train_features_unsafe = feature_extractor.extract_features(unsafe_train_pool, batch_size=8) if unsafe_train_pool else np.zeros((0, train_features_benign.shape[1]), dtype=np.float32)
+
+    # Concatenate for threshold optimizer labels
+    train_features = np.vstack([train_features_benign, train_features_unsafe])
+    train_labels_thr = np.hstack([np.zeros(len(train_features_benign)), np.ones(len(train_features_unsafe))]) if len(train_features_unsafe) > 0 else np.zeros(len(train_features_benign))
 
     # Combine test samples and create labels with dataset info
     test_dataset_info = {
@@ -611,7 +642,7 @@ if __name__ == "__main__":
     print("EVALUATING AUTOENCODER")
     print("="*50)
 
-    results = evaluate_autoencoder_detailed(model, test_features, np.array(test_labels), test_dataset_info, config)
+    results = evaluate_autoencoder_detailed(model, test_features, np.array(test_labels), test_dataset_info, train_features, train_labels_thr, config)
 
     # Print overall results
     print("\n" + "="*50)
