@@ -1,6 +1,6 @@
-# Jail-DAM with Autoencoder Baselines
+# JailDAM Autoencoder Baselines For Jailbreak Detection
 
-This repository contains the original Jail-DAM implementation plus three autoencoder-based baselines for jailbreak detection.
+This repository contains the three autoencoder-based baselines for jailbreak detection.
 
 ## Autoencoder Baselines
 
@@ -48,6 +48,7 @@ The three autoencoder approaches provide different trade-offs:
 
 Results are saved to `results/` directory with detailed per-dataset breakdowns.
 
+## 📜 Citing JailDAM
 Part of the implementation refers to their [original repository](https://github.com/ShenzheZhu/JailDAM). If by any chance this repository is useful to you, you only need to cite their work:
 
 ```bibtex
