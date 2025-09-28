@@ -1,0 +1,47 @@
+[project]
+name = "jaildam-customized"
+version = "0.1.0"
+description = "JailDAM Autoencoder For Jailbreak Detection - Customized experiments"
+authors = [
+    {name = "Peichun", email = "peichunhua@link.cuhk.edu.cn"}
+    
+]
+readme = "README.md"
+requires-python = ">=3.8.1"
+dependencies = [
+    "torch>=2.0.0",
+    "torchvision>=0.15.0",
+    "transformers>=4.30.0",
+    "datasets>=2.12.0",
+    "scikit-learn>=1.3.0",
+    "numpy>=1.24.0",
+    "pandas>=2.0.0",
+    "pillow>=9.5.0",
+    "requests>=2.31.0",
+    "tqdm>=4.65.0",
+    "matplotlib>=3.7.0",
+    "seaborn>=0.12.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "black>=23.0.0",
+    "flake8>=6.0.0",
+    "mypy>=1.0.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=7.0.0",
+    "black>=23.0.0",
+    "flake8>=5.0.0",
+    "mypy>=1.0.0",
+]
