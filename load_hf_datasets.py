@@ -117,67 +117,45 @@ def load_truthfulqa(max_samples=None):
         print(f"Error loading TruthfulQA: {e}")
         return []
 
-def load_vcr(max_samples=None):
+def load_okvqa_multilang(max_samples=None):
     """
-    Load VCR (Visual Commonsense Reasoning) dataset - a multimodal dataset
+    Load OK-VQA-multilang dataset - a multilingual visual question answering dataset
     
     Args:
         max_samples: Maximum number of samples to return
         
     Returns:
-        List of samples in format {"txt": str, "img": str, "toxicity": 0}
+        List of samples in format {"txt": str, "img": None, "toxicity": 0}
     """
     try:
-        print("Loading VCR dataset from HuggingFace...")
-        dataset = load_dataset("visualcommonsense/vcr", split="train")
+        print("Loading OK-VQA-multilang dataset from HuggingFace...")
+        dataset = load_dataset("dinhanhx/OK-VQA-multilang", split="train")
         
         samples = []
         for i, item in enumerate(dataset):
             if i >= (max_samples or len(dataset)):
                 break
                 
-            # Get the question and answer
-            question = item['question']
-            answer = item['answer']
+            # Get the text content (this dataset only has 'text' field)
+            text_content = item['text']
             
-            # Format as a question-answer pair
-            text = f"Question: {question}\nAnswer: {answer}"
-            
-            # Get image URL and download it
-            img_url = item['img_url']
-            img_path = f"data/vcr_images/vcr_{i}.jpg"
-            
-            # Create directory if it doesn't exist
-            os.makedirs(os.path.dirname(img_path), exist_ok=True)
-            
-            # Download image if not already exists
-            if not os.path.exists(img_path):
-                try:
-                    response = requests.get(img_url)
-                    if response.status_code == 200:
-                        with open(img_path, 'wb') as f:
-                            f.write(response.content)
-                    else:
-                        print(f"Failed to download image {i}: {response.status_code}")
-                        img_path = None
-                except Exception as e:
-                    print(f"Error downloading image {i}: {e}")
-                    img_path = None
+            # Use the text content directly as it appears to be question-answer pairs
+            text = f"Question: {text_content}"
             
             sample = {
                 "txt": text,
-                "img": img_path if img_path and os.path.exists(img_path) else None,
-                "toxicity": 0,  # VCR is benign
-                "dataset": "vcr",
-                "question_id": f"vcr_{i}"
+                "img": None,  # This dataset doesn't have images
+                "toxicity": 0,  # OK-VQA is benign
+                "dataset": "okvqa_multilang",
+                "question_id": f"okvqa_{i}"
             }
             samples.append(sample)
         
-        print(f"Successfully loaded {len(samples)} samples from VCR")
+        print(f"Successfully loaded {len(samples)} samples from OK-VQA-multilang")
         return samples
         
     except Exception as e:
-        print(f"Error loading VCR: {e}")
+        print(f"Error loading OK-VQA-multilang: {e}")
         return []
 
 def load_scienceqa(max_samples=None):
@@ -261,31 +239,56 @@ def load_jailbreakv_subset(max_samples=None):
     try:
         print("Loading JailBreakV-28k subset from local directory...")
         
-        # Import the existing loader
-        import sys
-        sys.path.append('reference')
-        from load_datasets import load_JailBreakV_custom
+        # Check if subset directory exists
+        subset_path = "data/JailBreakV_28k_subset"
+        if not os.path.exists(subset_path):
+            print(f"JailBreakV-28k subset directory not found at {subset_path}")
+            return []
         
-        # Load all attack types and styles
-        samples = load_JailBreakV_custom(
-            attack_types=["figstep", "llm_transfer_attack", "query_related"],
-            image_styles=None,  # All styles
-            max_samples=max_samples
-        )
+        # Load the CSV file directly
+        import pandas as pd
+        csv_path = os.path.join(subset_path, "mini_JailBreakV_28K.csv")
+        if not os.path.exists(csv_path):
+            print(f"CSV file not found at {csv_path}")
+            return []
         
-        # Update base path to use the subset directory
-        for sample in samples:
-            if sample.get('img'):
-                # Update path to use subset directory
-                img_path = sample['img']
-                if 'JailBreakV-28K' in img_path:
-                    new_path = img_path.replace('JailBreakV-28K', 'JailBreakV_28k_subset')
-                    if os.path.exists(new_path):
-                        sample['img'] = new_path
-                    else:
-                        print(f"Warning: Image not found in subset: {new_path}")
-                        sample['img'] = None
-                sample['dataset'] = 'jailbreakv_subset'
+        df = pd.read_csv(csv_path)
+        queries = df["jailbreak_query"].tolist()
+        
+        # Collect images from the subset directory
+        samples = []
+        attack_types = ["figstep", "llm_transfer_attack", "query_related"]
+        
+        for attack_type in attack_types:
+            attack_dir = os.path.join(subset_path, attack_type)
+            if not os.path.exists(attack_dir):
+                continue
+                
+            # Get all image files in the attack directory
+            image_files = [f for f in os.listdir(attack_dir) if f.endswith(('.png', '.jpg', '.jpeg'))]
+            
+            for i, img_file in enumerate(image_files):
+                if max_samples and len(samples) >= max_samples:
+                    break
+                    
+                # Use query from CSV (cycle through if we have more images than queries)
+                query_idx = i % len(queries)
+                query = queries[query_idx]
+                
+                img_path = os.path.join(attack_dir, img_file)
+                
+                sample = {
+                    "txt": query,
+                    "img": img_path,
+                    "toxicity": 1,  # JailBreakV is malicious
+                    "dataset": "jailbreakv_subset",
+                    "question_id": f"jailbreakv_{len(samples)}"
+                }
+                samples.append(sample)
+            
+            # If we've reached max_samples, stop processing other attack types
+            if max_samples and len(samples) >= max_samples:
+                break
         
         print(f"Successfully loaded {len(samples)} samples from JailBreakV-28k subset")
         return samples
@@ -310,7 +313,7 @@ def load_all_test_datasets(max_samples_per_dataset=500):
     benign_datasets = {
         'sciq': load_sciq(max_samples_per_dataset),
         'truthfulqa': load_truthfulqa(max_samples_per_dataset),
-        'vcr': load_vcr(max_samples_per_dataset),
+        'okvqa_multilang': load_okvqa_multilang(max_samples_per_dataset),
         'scienceqa': load_scienceqa(max_samples_per_dataset)
     }
     
@@ -358,11 +361,11 @@ if __name__ == "__main__":
     if truthfulqa_samples:
         print(f"  Sample: {truthfulqa_samples[0]['txt'][:100]}...")
     
-    print(f"\nTesting VCR (max {test_samples} samples):")
-    vcr_samples = load_vcr(test_samples)
-    if vcr_samples:
-        print(f"  Sample: {vcr_samples[0]['txt'][:100]}...")
-        print(f"  Image: {vcr_samples[0]['img']}")
+    print(f"\nTesting OK-VQA-multilang (max {test_samples} samples):")
+    okvqa_samples = load_okvqa_multilang(test_samples)
+    if okvqa_samples:
+        print(f"  Sample: {okvqa_samples[0]['txt'][:100]}...")
+        print(f"  Image: {okvqa_samples[0]['img']} (no images in this dataset)")
     
     print(f"\nTesting ScienceQA (max {test_samples} samples):")
     scienceqa_samples = load_scienceqa(test_samples)
