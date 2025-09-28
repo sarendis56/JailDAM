@@ -10,16 +10,26 @@ import warnings
 # Suppress the specific PyTorch warning about meta parameters
 warnings.filterwarnings("ignore", message=".*copying from a non-meta parameter in the checkpoint to a meta parameter.*")
 
+# Global seed for reproducible dataset sampling
+DATASET_RANDOM_SEED = 42
+
 # Set random seed for reproducible dataset sampling
 # This ensures consistent results across runs when using random.sample()
-random.seed(42)
-np.random.seed(42)
+random.seed(DATASET_RANDOM_SEED)
+np.random.seed(DATASET_RANDOM_SEED)
 
 def set_dataset_random_seed(seed=42):
     """Set random seed for reproducible dataset sampling"""
+    global DATASET_RANDOM_SEED
+    DATASET_RANDOM_SEED = seed
     random.seed(seed)
     np.random.seed(seed)
     print(f"Dataset random seed set to {seed}")
+
+def ensure_deterministic_sampling():
+    """Ensure deterministic sampling by resetting seed before random operations"""
+    random.seed(DATASET_RANDOM_SEED)
+    np.random.seed(DATASET_RANDOM_SEED)
 
 def load_XSTest(file_path = 'data/XSTest/data/gpt4-00000-of-00001.parquet'):
     if file_path.endswith('.parquet'):
@@ -60,7 +70,7 @@ def load_FigTxt():
     print("Successfully built FigTxt dataset.")
     return safe_set + unsafe_set
 
-def load_mm_vet(json_path = "data/MM-Vet/mm-vet.json"):
+def load_mm_vet(json_path = "data/mm-vet/mm-vet.json"):
     dataset = []
     try:
         with open(json_path, "r") as f:
@@ -73,7 +83,14 @@ def load_mm_vet(json_path = "data/MM-Vet/mm-vet.json"):
                 if isinstance(item, dict):
                     # Extract question text and image path
                     question = item.get('question', item.get('text', ''))
-                    image_path = item.get('image', item.get('image_path', None))
+
+                    # Handle MM-Vet specific image naming convention
+                    image_name = item.get('imagename', item.get('image', item.get('image_path', None)))
+                    if image_name and not image_name.startswith(('http://', 'https://', '/')):
+                        # Construct full path to MM-Vet images directory
+                        image_path = f"data/mm-vet/images/{image_name}"
+                    else:
+                        image_path = image_name
 
                     sample = {
                         "txt": question,
@@ -96,9 +113,17 @@ def load_mm_vet(json_path = "data/MM-Vet/mm-vet.json"):
             for i, item in enumerate(raw_data):
                 if isinstance(item, dict):
                     # Ensure proper format
+                    # Handle MM-Vet specific image naming convention
+                    image_name = item.get('imagename', item.get('image', item.get('image_path', item.get('img', None))))
+                    if image_name and not image_name.startswith(('http://', 'https://', '/')):
+                        # Construct full path to MM-Vet images directory
+                        image_path = f"data/mm-vet/images/{image_name}"
+                    else:
+                        image_path = image_name
+
                     sample = {
                         "txt": item.get('question', item.get('text', item.get('txt', ''))),
-                        "img": item.get('image', item.get('image_path', item.get('img', None))),
+                        "img": image_path,
                         "toxicity": item.get('toxicity', 0),
                         "question_id": item.get('question_id', f"mmvet_{i}")
                     }
@@ -122,65 +147,50 @@ def load_mm_vet(json_path = "data/MM-Vet/mm-vet.json"):
 
 
     
-def load_mm_safety_bench(file_path):   
+def load_mm_safety_bench(file_path):
     dataset = []
     try:
         df = pd.read_parquet(file_path)
         for _, row in df.iterrows():
-            img_value = row['image'] if "Text_only" not in file_path else None
-            dataset.append({"txt": row['question'], "img": img_value, "toxicity": 1})        
+            img_value = None
+            if row.get('image') and row['attack_type'] != 'Text_only':
+                img_path = row['image']
+                if not img_path.startswith('/'):
+                    img_value = f"data/MM-SafetyBench/{img_path}"
+                else:
+                    img_value = img_path
+
+            dataset.append({
+                "txt": row['question'],
+                "img": img_value,
+                "toxicity": 1,
+                "category": row.get('category', ''),
+                "attack_type": row.get('attack_type', ''),
+                "split": row.get('split', '')
+            })
     except Exception as e:
-        print(f"Error building the dataset from {file_path}: {e}") 
+        print(f"Error building the dataset from {file_path}: {e}")
     return dataset
 
 def load_mm_safety_bench_all(max_samples=2000):
     """Load all MM-SafetyBench categories combined with default limit of 2000 samples"""
     dataset = []
-    sd_typo_paths = [
-        "data/MM-SafetyBench/data/Illegal_Activitiy/SD_TYPO.parquet",
-        "data/MM-SafetyBench/data/Physical_Harm/SD_TYPO.parquet",
-        "data/MM-SafetyBench/data/Sex/SD_TYPO.parquet",
-        "data/MM-SafetyBench/data/HateSpeech/SD_TYPO.parquet",
-        "data/MM-SafetyBench/data/Fraud/SD_TYPO.parquet",
-        "data/MM-SafetyBench/data/Malware_Generation/SD_TYPO.parquet",
-        "data/MM-SafetyBench/data/EconomicHarm/SD_TYPO.parquet",
-        "data/MM-SafetyBench/data/Privacy_Violence/SD_TYPO.parquet"
-    ]
-    sd_paths = [
-        "data/MM-SafetyBench/data/Illegal_Activitiy/SD.parquet",
-        "data/MM-SafetyBench/data/Physical_Harm/SD.parquet",
-        "data/MM-SafetyBench/data/Sex/SD.parquet",
-        "data/MM-SafetyBench/data/HateSpeech/SD.parquet",
-        "data/MM-SafetyBench/data/Fraud/SD.parquet",
-        "data/MM-SafetyBench/data/Malware_Generation/SD.parquet",
-        "data/MM-SafetyBench/data/EconomicHarm/SD.parquet",
-        "data/MM-SafetyBench/data/Privacy_Violence/SD.parquet"
-    ]
-    typo_paths = [
-        "data/MM-SafetyBench/data/Illegal_Activitiy/TYPO.parquet",
-        "data/MM-SafetyBench/data/Physical_Harm/TYPO.parquet",
-        "data/MM-SafetyBench/data/Sex/TYPO.parquet",
-        "data/MM-SafetyBench/data/HateSpeech/TYPO.parquet",
-        "data/MM-SafetyBench/data/Fraud/TYPO.parquet",
-        "data/MM-SafetyBench/data/Malware_Generation/TYPO.parquet",
-        "data/MM-SafetyBench/data/EconomicHarm/TYPO.parquet",
-        "data/MM-SafetyBench/data/Privacy_Violence/TYPO.parquet"
-    ]
-    text_only_paths = [
-        "data/MM-SafetyBench/data/Illegal_Activitiy/Text_only.parquet",
-        "data/MM-SafetyBench/data/Physical_Harm/Text_only.parquet",
-        "data/MM-SafetyBench/data/Sex/Text_only.parquet",
-        "data/MM-SafetyBench/data/HateSpeech/Text_only.parquet",
-        "data/MM-SafetyBench/data/Fraud/Text_only.parquet",
-        "data/MM-SafetyBench/data/Malware_Generation/Text_only.parquet",
-        "data/MM-SafetyBench/data/EconomicHarm/Text_only.parquet",
-        "data/MM-SafetyBench/data/Privacy_Violence/Text_only.parquet"
+
+    categories = [
+        'EconomicHarm', 'Financial_Advice', 'Fraud', 'Gov_Decision',
+        'HateSpeech', 'Health_Consultation', 'Illegal_Activitiy', 'Legal_Opinion',
+        'Malware_Generation', 'Physical_Harm', 'Political_Lobbying',
+        'Privacy_Violence', 'Sex'
     ]
 
-    for path in sd_typo_paths + sd_paths + typo_paths + text_only_paths:
-        dataset.extend(load_mm_safety_bench(path))
+    for category in categories:
+        category_path = f"data/MM-SafetyBench/data/{category}.parquet"
+        if os.path.exists(category_path):
+            category_data = load_mm_safety_bench(category_path)
+            dataset.extend(category_data)
+        else:
+            print(f"Warning: Category file not found: {category_path}")
 
-    # Apply sample limit - default increased to 2000 for better training
     if max_samples and len(dataset) > max_samples:
         dataset = random.sample(dataset, max_samples)
 
@@ -189,41 +199,40 @@ def load_mm_safety_bench_all(max_samples=2000):
 
 def load_mm_safety_bench_bimodal(max_samples=2000):
     dataset = []
-    sd_typo_paths = [
-        "data/MM-SafetyBench/data/Illegal_Activitiy/SD_TYPO.parquet",
-        "data/MM-SafetyBench/data/Physical_Harm/SD_TYPO.parquet",
-        "data/MM-SafetyBench/data/Sex/SD_TYPO.parquet",
-        "data/MM-SafetyBench/data/HateSpeech/SD_TYPO.parquet",
-        "data/MM-SafetyBench/data/Fraud/SD_TYPO.parquet",
-        "data/MM-SafetyBench/data/Malware_Generation/SD_TYPO.parquet",
-        "data/MM-SafetyBench/data/EconomicHarm/SD_TYPO.parquet",
-        "data/MM-SafetyBench/data/Privacy_Violence/SD_TYPO.parquet"
+
+    categories = [
+        'EconomicHarm', 'Financial_Advice', 'Fraud', 'Gov_Decision',
+        'HateSpeech', 'Health_Consultation', 'Illegal_Activitiy', 'Legal_Opinion',
+        'Malware_Generation', 'Physical_Harm', 'Political_Lobbying',
+        'Privacy_Violence', 'Sex'
     ]
 
-    sd_paths = [
-        "data/MM-SafetyBench/data/Illegal_Activitiy/SD.parquet",
-        "data/MM-SafetyBench/data/Physical_Harm/SD.parquet",
-        "data/MM-SafetyBench/data/Sex/SD.parquet",
-        "data/MM-SafetyBench/data/HateSpeech/SD.parquet",
-        "data/MM-SafetyBench/data/Fraud/SD.parquet",
-        "data/MM-SafetyBench/data/Malware_Generation/SD.parquet",
-        "data/MM-SafetyBench/data/EconomicHarm/SD.parquet",
-        "data/MM-SafetyBench/data/Privacy_Violence/SD.parquet"
-    ]
+    for category in categories:
+        category_path = f"data/MM-SafetyBench/data/{category}.parquet"
+        if os.path.exists(category_path):
+            try:
+                df = pd.read_parquet(category_path)
+                bimodal_df = df[df['attack_type'].isin(['SD', 'SD_TYPO', 'TYPO'])]
 
-    typo_paths = [
-        "data/MM-SafetyBench/data/Illegal_Activitiy/TYPO.parquet",
-        "data/MM-SafetyBench/data/Physical_Harm/TYPO.parquet",
-        "data/MM-SafetyBench/data/Sex/TYPO.parquet",
-        "data/MM-SafetyBench/data/HateSpeech/TYPO.parquet",
-        "data/MM-SafetyBench/data/Fraud/TYPO.parquet",
-        "data/MM-SafetyBench/data/Malware_Generation/TYPO.parquet",
-        "data/MM-SafetyBench/data/EconomicHarm/TYPO.parquet",
-        "data/MM-SafetyBench/data/Privacy_Violence/TYPO.parquet"
-    ]
+                for _, row in bimodal_df.iterrows():
+                    img_value = None
+                    if row.get('image'):
+                        img_path = row['image']
+                        if not img_path.startswith('/'):
+                            img_value = f"data/MM-SafetyBench/{img_path}"
+                        else:
+                            img_value = img_path
 
-    for path in sd_typo_paths + sd_paths + typo_paths:
-        dataset.extend(load_mm_safety_bench(path))
+                    dataset.append({
+                        "txt": row['question'],
+                        "img": img_value,
+                        "toxicity": 1,
+                        "category": row.get('category', ''),
+                        "attack_type": row.get('attack_type', ''),
+                        "split": row.get('split', '')
+                    })
+            except Exception as e:
+                print(f"Warning: Error loading {category_path}: {e}")
 
     # Apply sample limit - default increased to 2000 for better training
     if len(dataset) > max_samples:
@@ -234,26 +243,38 @@ def load_mm_safety_bench_bimodal(max_samples=2000):
 
 def load_mm_safety_bench_txt(max_samples=2000):
     dataset = []
-    text_only_paths = [
-        "data/MM-SafetyBench/data/Illegal_Activitiy/Text_only.parquet",
-        "data/MM-SafetyBench/data/Physical_Harm/Text_only.parquet",
-        "data/MM-SafetyBench/data/Sex/Text_only.parquet",
-        "data/MM-SafetyBench/data/HateSpeech/Text_only.parquet",
-        "data/MM-SafetyBench/data/Fraud/Text_only.parquet",
-        "data/MM-SafetyBench/data/Malware_Generation/Text_only.parquet",
-        "data/MM-SafetyBench/data/EconomicHarm/Text_only.parquet",
-        "data/MM-SafetyBench/data/Privacy_Violence/Text_only.parquet"
-    ]
-    for path in text_only_paths:
-        dataset.extend(load_mm_safety_bench(path))
 
-    # Apply sample limit - default increased to 2000 for better training
+    categories = [
+        'EconomicHarm', 'Financial_Advice', 'Fraud', 'Gov_Decision',
+        'HateSpeech', 'Health_Consultation', 'Illegal_Activitiy', 'Legal_Opinion',
+        'Malware_Generation', 'Physical_Harm', 'Political_Lobbying',
+        'Privacy_Violence', 'Sex'
+    ]
+
+    for category in categories:
+        category_path = f"data/MM-SafetyBench/data/{category}.parquet"
+        if os.path.exists(category_path):
+            try:
+                df = pd.read_parquet(category_path)
+                text_only_df = df[df['attack_type'] == 'Text_only']
+
+                for _, row in text_only_df.iterrows():
+                    dataset.append({
+                        "txt": row['question'],
+                        "img": None,
+                        "toxicity": 1,
+                        "category": row.get('category', ''),
+                        "attack_type": row.get('attack_type', ''),
+                        "split": row.get('split', '')
+                    })
+            except Exception as e:
+                print(f"Warning: Error loading {category_path}: {e}")
     total_available = len(dataset)
     if total_available > max_samples:
         dataset = random.sample(dataset, max_samples)
-        print(f"Successfully loaded {len(dataset)} samples from MM-SafetyBench (all categories) (out of {total_available} available)")
+        print(f"Successfully loaded {len(dataset)} samples from MM-SafetyBench text-only (out of {total_available} available)")
     else:
-        print(f"Successfully loaded {len(dataset)} samples from MM-SafetyBench (all categories) (all available)")
+        print(f"Successfully loaded {len(dataset)} samples from MM-SafetyBench text-only (all available)")
     return dataset
 
 def load_JailBreakV_figstep(max_samples=None):
@@ -276,8 +297,10 @@ def load_JailBreakV_query_related(image_styles=None, max_samples=None):
     Load JailBreakV-28K dataset using query_related images
 
     Args:
-        image_styles: List of styles to include ['SD', 'typo'] or None for all
+        image_styles: List of styles to include ['SD', 'typo'] or None for default (SD only)
         max_samples: Maximum number of samples to return
+
+    Note: Defaults to SD style only to prevent dataset leakage with typo style
     """
     return _load_JailBreakV_subset(attack_types=["query_related"],
                                    image_styles=image_styles, max_samples=max_samples)
@@ -328,10 +351,11 @@ def _load_JailBreakV_subset(attack_types=None, image_styles=None, max_samples=No
         attack_types = ["figstep", "llm_transfer_attack", "query_related"]
 
     # Define available styles for each attack type (based on filename prefixes)
+    # Note: query_related defaults to only "SD" to prevent dataset leakage with figstep testing
     available_styles = {
         "figstep": ["figstep"],  # figstep images have no prefix
-        "llm_transfer_attack": ["nature", "noise", "SD", "blank"],  # SD not SD_related
-        "query_related": ["SD", "typo"]  # Only SD and typo prefixes exist
+        "llm_transfer_attack": ["nature", "noise", "SD", "blank"],
+        "query_related": ["SD"]  # Default to SD only to prevent leakage with typo style
     }
 
     try:
@@ -414,6 +438,8 @@ def _load_JailBreakV_subset(attack_types=None, image_styles=None, max_samples=No
 
         # Apply sample limit if specified
         if max_samples is not None and len(unsafe_set) > max_samples:
+            # Ensure deterministic sampling by resetting seed
+            ensure_deterministic_sampling()
             unsafe_set = random.sample(unsafe_set, max_samples)
             print(f"Sampled {max_samples} from {len(collected_images)} available samples")
 
@@ -436,10 +462,11 @@ def list_JailBreakV_available_styles():
     base_path = "data/JailBreakV-28K"
 
     # Define available styles based on filename prefixes
+    # Note: This shows ALL available styles, but query_related defaults to SD only
     available_styles = {
         "figstep": ["figstep"],
         "llm_transfer_attack": ["nature", "noise", "SD", "blank"],
-        "query_related": ["SD", "typo"]
+        "query_related": ["SD", "typo"]  # All available, but default is SD only
     }
 
     print("JailBreakV-28K Available Attack Types and Image Styles:")
@@ -503,29 +530,33 @@ def list_JailBreakV_available_styles():
 def load_mm_safety_bench_by_category(category_name, max_samples=200):
     """Load MM-SafetyBench samples for a specific category with default limit of 200"""
     dataset = []
-    category_paths = [
-        f"data/MM-SafetyBench/data/{category_name}/SD_TYPO.parquet",
-        f"data/MM-SafetyBench/data/{category_name}/SD.parquet",
-        f"data/MM-SafetyBench/data/{category_name}/TYPO.parquet",
-        f"data/MM-SafetyBench/data/{category_name}/Text_only.parquet"
-    ]
+    category_path = f"data/MM-SafetyBench/data/{category_name}.parquet"
 
-    for path in category_paths:
-        if os.path.exists(path):
-            try:
-                df = pd.read_parquet(path)
-                for _, row in df.iterrows():
-                    img_value = row['image'] if "Text_only" not in path else None
-                    dataset.append({
-                        "txt": row['question'],
-                        "img": img_value,
-                        "toxicity": 1,
-                        "category": category_name
-                    })
-            except Exception as e:
-                print(f"Error loading {path}: {e}")
+    if os.path.exists(category_path):
+        try:
+            df = pd.read_parquet(category_path)
+            for _, row in df.iterrows():
+                img_value = None
+                if row.get('image') and row['attack_type'] != 'Text_only':
+                    img_path = row['image']
+                    if not img_path.startswith('/'):
+                        img_value = f"data/MM-SafetyBench/{img_path}"
+                    else:
+                        img_value = img_path
 
-    # Limit samples if requested
+                dataset.append({
+                    "txt": row['question'],
+                    "img": img_value,
+                    "toxicity": 1,
+                    "category": row.get('category', category_name),
+                    "attack_type": row.get('attack_type', ''),
+                    "split": row.get('split', '')
+                })
+        except Exception as e:
+            print(f"Error loading {category_path}: {e}")
+    else:
+        print(f"Warning: Category file not found: {category_path}")
+
     if max_samples and len(dataset) > max_samples:
         dataset = random.sample(dataset, max_samples)
 
@@ -602,7 +633,7 @@ def load_advbench(max_samples=None):
 # AlpacaToxicQA removed - not used in current experiments
 
 def load_dan_prompts(max_samples=None):
-    """Load DAN (Do Anything Now) jailbreak prompts from TrustAIRLab/in-the-wild-jailbreak-prompts"""
+    """Load jailbreak prompts from TrustAIRLab/in-the-wild-jailbreak-prompts"""
     import json
 
     try:
@@ -670,33 +701,122 @@ def load_adversarial_img():
         return unsafe_set
 
 def load_vqav2(max_samples=None):
-    """Load VQAv2 dataset for multimodal benign samples"""
+    """Load VQAv2 dataset for multimodal benign samples - supports both original VQAv2 and VizWiz-VQA formats"""
     import json
     import os
 
-    # Try both relative paths (from code directory and from HiddenDetect directory)
-    possible_paths = [
-        "data/VQAv2/vqav2_samples.json",
-        "../data/VQAv2/vqav2_samples.json"
+    # Define paths for VQAv2 dataset files
+    possible_base_paths = [
+        "data/VQAv2",
+        "../data/VQAv2"
     ]
 
-    for path in possible_paths:
+    base_path = None
+    for path in possible_base_paths:
+        if os.path.exists(path):
+            base_path = path
+            break
+
+    if base_path is None:
+        print("VQAv2 dataset directory not found.")
+        return []
+
+    # Check for VizWiz-VQA format first (our current implementation)
+    vizwiz_samples_file = os.path.join(base_path, "vqav2_samples.json")
+    vizwiz_images_dir = os.path.join(base_path, "images")
+
+    if os.path.exists(vizwiz_samples_file):
+        print("Loading VizWiz-VQA format...")
         try:
-            if os.path.exists(path):
-                with open(path, 'r', encoding='utf-8') as f:
-                    samples = json.load(f)
+            with open(vizwiz_samples_file, 'r', encoding='utf-8') as f:
+                samples = json.load(f)
 
-                total_available = len(samples)
-                if max_samples and max_samples < total_available:
-                    samples = samples[:max_samples]
-                    print(f"Successfully loaded {len(samples)} samples from VQAv2 (out of {total_available} available)")
-                else:
-                    print(f"Successfully loaded {len(samples)} samples from VQAv2 (all available)")
-                return samples
+            # Update image paths to be absolute
+            for sample in samples:
+                if sample.get("img"):
+                    sample["img"] = os.path.join(vizwiz_images_dir, sample["img"])
+
+            # Apply max_samples limit if specified
+            if max_samples and max_samples < len(samples):
+                ensure_deterministic_sampling()
+                samples = random.sample(samples, max_samples)
+
+            print(f"Successfully loaded {len(samples)} samples from VizWiz-VQA format")
+            return samples
+
         except Exception as e:
-            continue
+            print(f"Error loading VizWiz-VQA format: {e}")
+            # Fall through to try original VQAv2 format
 
-    print("VQAv2 dataset not found.")
+    # Try original VQAv2 format
+    questions_file = os.path.join(base_path, "v2_OpenEnded_mscoco_val2014_questions.json")
+    annotations_file = os.path.join(base_path, "v2_mscoco_val2014_annotations.json")
+    images_dir = os.path.join(base_path, "images", "val2014")
+
+    if os.path.exists(questions_file) and os.path.exists(annotations_file):
+        print("Loading original VQAv2 format...")
+        try:
+            # Load questions
+            with open(questions_file, 'r', encoding='utf-8') as f:
+                questions_data = json.load(f)
+
+            # Load annotations (answers)
+            with open(annotations_file, 'r', encoding='utf-8') as f:
+                annotations_data = json.load(f)
+
+            # Create mapping from question_id to annotation
+            annotations_map = {}
+            for annotation in annotations_data['annotations']:
+                annotations_map[annotation['question_id']] = annotation
+
+            # Build samples
+            samples = []
+            questions = questions_data['questions']
+
+            # Ensure deterministic sampling
+            ensure_deterministic_sampling()
+
+            # If max_samples is specified and less than total, sample randomly
+            if max_samples and max_samples < len(questions):
+                questions = random.sample(questions, max_samples)
+
+            for question_item in questions:
+                question_id = question_item['question_id']
+                image_id = question_item['image_id']
+                question_text = question_item['question']
+
+                # Construct image path
+                image_filename = f"COCO_val2014_{image_id:012d}.jpg"
+                image_path = os.path.join(images_dir, image_filename)
+
+                # Check if image exists
+                if not os.path.exists(image_path):
+                    continue
+
+                # Get annotation if available
+                annotation = annotations_map.get(question_id, {})
+                answers = annotation.get('answers', [])
+
+                # Create sample
+                sample = {
+                    "txt": question_text,
+                    "img": image_path,
+                    "toxicity": 0,  # VQAv2 is benign
+                    "question_id": question_id,
+                    "image_id": image_id,
+                    "answers": [ans['answer'] for ans in answers] if answers else []
+                }
+                samples.append(sample)
+
+            print(f"Successfully loaded {len(samples)} samples from original VQAv2 format")
+            return samples
+
+        except FileNotFoundError as e:
+            print(f"Original VQAv2 dataset files not found: {e}")
+        except Exception as e:
+            print(f"Error loading original VQAv2 dataset: {e}")
+
+    print("No valid VQAv2 format found (neither VizWiz-VQA nor original VQAv2)")
     return []
 
 def load_dan_jailbreak_prompts(max_samples=None):

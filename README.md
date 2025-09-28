@@ -1,4 +1,4 @@
-# JailDAM Autoencoder Baselines For Jailbreak Detection
+# JailDAM Autoencoder For Jailbreak Detection
 
 This repository contains the three autoencoder-based baselines for jailbreak detection.
 
@@ -7,8 +7,7 @@ This repository contains the three autoencoder-based baselines for jailbreak det
 ### Quick Start
 ```bash
 # Run all three approaches
-python autoencoder_vlm_baseline.py      # Unsupervised baseline
-python autoencoder_semisupervised.py    # Semi-supervised approach
+python autoencoder_vlm_baseline.py      # Baseline
 python autoencoder_dual.py              # Dual autoencoder approach
 
 # Compare results
@@ -17,7 +16,6 @@ python compare_approaches.py
 
 ### Approaches
 1. **Unsupervised**: Trains only on benign data, detects anomalies via reconstruction error
-2. **Semi-Supervised**: Uses both benign and unsafe training data with combined objectives
 3. **Dual**: Trains separate autoencoders for benign and unsafe data, uses error difference
 
 ## 📁 Repository Structure
@@ -25,26 +23,14 @@ python compare_approaches.py
 ### Autoencoder Implementation
 - `Autoencoder.py` - Enhanced autoencoder class
 - `autoencoder_vlm_baseline.py` - Unsupervised baseline
-- `autoencoder_semisupervised.py` - Semi-supervised approach
 - `autoencoder_dual.py` - Dual autoencoder approach
 
 ### Dataset Configuration
-- `reference/load_datasets.py`
-- `reference/reference_load_datasets.py` - Original dataset loading code in my approach. *Not runnable standalone.*
+- `reference/load_datasets.py` - Dataset loading
 - `data` - Dataset files (organized by source, not shown in this repository)
 
 ### Results
 - `results/` - Experiment results (JSON format)
-
-## 📊 Performance Comparison
-
-The three autoencoder approaches provide different trade-offs:
-
-| Approach | Training Data | Detection Method |
-|----------|---------------|------------------|
-| Unsupervised | Benign only | High reconstruction error indicates anomaly (unsafe content) |
-| Semi-Supervised | Benign + Unsafe | α × Normalized_Reconstruction_Error + β × Classification_Score |
-| Dual | Benign/Unsafe Separate models | Benign_Reconstruction_Error - Unsafe_Reconstruction_Error |
 
 ### Detection Method Details
 
@@ -54,18 +40,7 @@ The three autoencoder approaches provide different trade-offs:
 - **Detection**: `MSE_Loss(input, reconstructed) > threshold → Unsafe`
 - **Threshold**: Optimized using validation subset for best F1 score
 
-#### 2. Semi-Supervised Autoencoder
-- **Training**:
-  - Autoencoder component: Learns to reconstruct all data (benign + unsafe)
-  - Classifier component: Learns to distinguish benign (0) vs unsafe (1) from latent representations
-  - Combined loss: `Reconstruction_Loss + λ × Classification_Loss`
-- **Detection**:
-  - Reconstruction score: `(error - min_error) / (max_error - min_error)`
-  - Classification score: `softmax(logits)[unsafe_class]`
-  - Combined score: `α × reconstruction_score + β × classification_score`
-  - Default weights: α=0.6, β=0.4
-
-#### 3. Dual Autoencoder
+#### 2. Dual Autoencoder
 - **Training**:
   - Benign autoencoder: Trained exclusively on benign data
   - Unsafe autoencoder: Trained exclusively on unsafe data
